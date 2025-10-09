@@ -40,13 +40,29 @@ print(f"Alert Threshold: {alert_threshold}")
 
 # COMMAND ----------
 
+def get_user_schema():
+    import re
+
+    user_email = spark.sql("SELECT current_user()").collect()[0][0]
+    # Extract before '@'
+    match = re.search(r'^[^@]+', user_email)
+    if match:
+        user_name =  match.group(0).replace('.', '_')
+        user_schema = "module4_" + user_name
+        return user_schema
+    
+    raise ValueError('User name could not be extracted')
+
+# COMMAND ----------
+
 from pyspark.sql.functions import *
 from datetime import datetime
 import json
 
 # Set catalog and schema
+user_schema = get_user_schema()
 spark.sql("USE CATALOG sm_training")
-spark.sql("USE SCHEMA retail_data")
+spark.sql(f"USE SCHEMA {user_schema}")
 
 validation_start = datetime.now()
 validation_results = []
@@ -72,7 +88,7 @@ bronze_sales_quality = spark.sql(f"""
         COUNT(DISTINCT transaction_id) as unique_transactions,
         MIN(transaction_timestamp) as earliest_transaction,
         MAX(transaction_timestamp) as latest_transaction
-    FROM retail_data.bronze_sales
+    FROM {user_schema}.bronze_sales
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -115,7 +131,7 @@ bronze_inventory_issues = spark.sql(f"""
         SUM(CASE WHEN current_stock < 0 THEN 1 ELSE 0 END) as negative_stock,
         SUM(CASE WHEN current_stock > 10000 THEN 1 ELSE 0 END) as excessive_stock,
         COUNT(*) as total_items
-    FROM retail_data.bronze_inventory
+    FROM {user_schema}.bronze_inventory
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -152,7 +168,7 @@ silver_enrichment = spark.sql(f"""
         AVG(data_quality_score) as avg_quality_score,
         MIN(data_quality_score) as min_quality_score,
         MAX(data_quality_score) as max_quality_score
-    FROM retail_data.silver_sales
+    FROM {user_schema}.silver_sales
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -182,7 +198,7 @@ customer_validation = spark.sql(f"""
         SUM(CASE WHEN churn_risk_score > 0.8 THEN 1 ELSE 0 END) as high_risk_customers,
         SUM(CASE WHEN days_since_last_purchase > 180 THEN 1 ELSE 0 END) as dormant_customers,
         AVG(churn_risk_score) as avg_churn_risk
-    FROM retail_data.silver_customers
+    FROM {user_schema}.silver_customers
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 if customer_validation["high_risk_customers"] is not None and customer_validation["total_customers"] is not None:
@@ -209,13 +225,13 @@ print("\n🔍 Validating Gold Layer...")
 # Check Gold aggregation completeness
 gold_completeness = spark.sql(f"""
     SELECT 
-        (SELECT COUNT(DISTINCT store_id) FROM retail_data.gold_daily_sales_summary 
+        (SELECT COUNT(DISTINCT store_id) FROM {user_schema}.gold_daily_sales_summary 
          WHERE processing_date = '{processing_date}') as stores_in_summary,
-        (SELECT COUNT(DISTINCT store_id) FROM retail_data.silver_sales 
+        (SELECT COUNT(DISTINCT store_id) FROM {user_schema}.silver_sales 
          WHERE processing_date = '{processing_date}') as stores_in_silver,
-        (SELECT COUNT(*) FROM retail_data.gold_customer_metrics 
+        (SELECT COUNT(*) FROM {user_schema}.gold_customer_metrics 
          WHERE processing_date = '{processing_date}') as customer_metrics,
-        (SELECT COUNT(DISTINCT customer_id) FROM retail_data.silver_sales 
+        (SELECT COUNT(DISTINCT customer_id) FROM {user_schema}.silver_sales 
          WHERE processing_date = '{processing_date}') as customers_in_silver
 """).collect()[0]
 
@@ -244,7 +260,7 @@ business_metrics = spark.sql(f"""
         AVG(avg_transaction_value) as avg_transaction,
         MAX(total_revenue) as max_store_revenue,
         MIN(total_revenue) as min_store_revenue
-    FROM retail_data.gold_daily_sales_summary
+    FROM {user_schema}.gold_daily_sales_summary
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -277,11 +293,11 @@ print("\n🔗 Performing Cross-Layer Consistency Checks...")
 # Check record count consistency
 consistency_check = spark.sql(f"""
     SELECT 
-        (SELECT COUNT(*) FROM retail_data.bronze_sales 
+        (SELECT COUNT(*) FROM {user_schema}.bronze_sales 
          WHERE processing_date = '{processing_date}') as bronze_count,
-        (SELECT COUNT(*) FROM retail_data.silver_sales 
+        (SELECT COUNT(*) FROM {user_schema}.silver_sales 
          WHERE processing_date = '{processing_date}') as silver_count,
-        (SELECT SUM(total_transactions) FROM retail_data.gold_daily_sales_summary 
+        (SELECT SUM(total_transactions) FROM {user_schema}.gold_daily_sales_summary 
          WHERE processing_date = '{processing_date}') as gold_transactions
 """).collect()[0]
 
@@ -318,11 +334,11 @@ print(f"   Silver → Gold: {(1-silver_to_gold_loss):.1%} retention")
 # Check data freshness
 freshness_check = spark.sql(f"""
     SELECT 
-        (SELECT MAX(ingestion_timestamp) FROM retail_data.bronze_sales 
+        (SELECT MAX(ingestion_timestamp) FROM {user_schema}.bronze_sales 
          WHERE processing_date = '{processing_date}') as bronze_latest,
-        (SELECT MAX(silver_processing_timestamp) FROM retail_data.silver_sales 
+        (SELECT MAX(silver_processing_timestamp) FROM {user_schema}.silver_sales 
          WHERE processing_date = '{processing_date}') as silver_latest,
-        (SELECT MAX(processing_timestamp) FROM retail_data.gold_daily_sales_summary 
+        (SELECT MAX(processing_timestamp) FROM {user_schema}.gold_daily_sales_summary 
          WHERE processing_date = '{processing_date}') as gold_latest
 """).collect()[0]
 
@@ -416,7 +432,7 @@ quality_df = quality_df.select(
     "error_percentage",
     "processing_date"
 )
-quality_df.write.mode("append").saveAsTable("retail_data.data_quality_metrics")
+quality_df.write.mode("append").saveAsTable(f"{user_schema}.data_quality_metrics")
 
 print(f"\n{'='*50}")
 print(f"QUALITY VALIDATION {overall_status}")
@@ -474,7 +490,7 @@ if overall_status in ["CRITICAL", "FAILED"]:
     }
     
     alert_df = spark.createDataFrame([alert_data])
-    alert_df.write.mode("append").saveAsTable("retail_data.pipeline_metrics")
+    alert_df.write.mode("append").saveAsTable(f"{user_schema}.pipeline_metrics")
 
 # COMMAND ----------
 
@@ -530,7 +546,7 @@ monitoring_data = [
 ]
 
 monitoring_df = spark.createDataFrame(monitoring_data)
-monitoring_df.write.mode("append").saveAsTable("retail_data.pipeline_metrics")
+monitoring_df.write.mode("append").saveAsTable(f"{user_schema}.pipeline_metrics")
 
 print(f"\n✅ Validation completed in {validation_duration:.2f} seconds")
 

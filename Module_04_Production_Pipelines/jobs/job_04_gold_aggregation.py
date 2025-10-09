@@ -40,14 +40,30 @@ print(f"Aggregation Window: {aggregation_window_days} days")
 
 # COMMAND ----------
 
+def get_user_schema():
+    import re
+
+    user_email = spark.sql("SELECT current_user()").collect()[0][0]
+    # Extract before '@'
+    match = re.search(r'^[^@]+', user_email)
+    if match:
+        user_name =  match.group(0).replace('.', '_')
+        user_schema = "module4_" + user_name
+        return user_schema
+    
+    raise ValueError('User name could not be extracted')
+
+# COMMAND ----------
+
 from pyspark.sql.functions import *
 from pyspark.sql.window import Window
 from datetime import datetime, timedelta
 import json
 
 # Set catalog and schema
+user_schema = get_user_schema()
 spark.sql("USE CATALOG sm_training")
-spark.sql("USE SCHEMA retail_data")
+spark.sql(f"USE SCHEMA {user_schema}")
 
 aggregation_start = datetime.now()
 aggregation_metrics = {}
@@ -68,14 +84,14 @@ print(f"Aggregation period: {start_date.strftime('%Y-%m-%d')} to {end_date.strft
 print("📊 Loading Silver layer data for aggregation...")
 
 # Load Silver tables with date filtering
-silver_sales_df = spark.table("retail_data.silver_sales") \
+silver_sales_df = spark.table(f"{user_schema}.silver_sales") \
     .filter(col("processing_date") >= start_date.strftime("%Y-%m-%d")) \
     .filter(col("processing_date") <= processing_date)
 
-silver_inventory_df = spark.table("retail_data.silver_inventory") \
+silver_inventory_df = spark.table(f"{user_schema}.silver_inventory") \
     .filter(col("processing_date") == processing_date)
 
-silver_customers_df = spark.table("retail_data.silver_customers") \
+silver_customers_df = spark.table(f"{user_schema}.silver_customers") \
     .filter(col("processing_date") == processing_date)
 
 print(f"✅ Loaded Silver data:")
@@ -380,7 +396,7 @@ try:
         daily_sales_final.write \
             .mode("append") \
             .partitionBy("processing_date") \
-            .saveAsTable("retail_data.gold_daily_sales_summary")
+            .saveAsTable(f"{user_schema}.gold_daily_sales_summary")
     
         print(f"✅ Daily sales summary: {daily_sales_final.count():,} records written")
     
@@ -389,7 +405,7 @@ try:
         customer_metrics.write \
             .mode("overwrite") \
             .partitionBy("processing_date") \
-            .saveAsTable("retail_data.gold_customer_metrics")
+            .saveAsTable(f"{user_schema}.gold_customer_metrics")
     
         print(f"✅ Customer metrics: {customer_metrics.count():,} records written")
     
@@ -397,7 +413,7 @@ try:
         # Write product analytics
         product_analytics.write \
             .mode("overwrite") \
-            .saveAsTable("retail_data.gold_product_analytics")
+            .saveAsTable(f"{user_schema}.gold_product_analytics")
         
         print(f"✅ Product analytics: {product_analytics.count():,} records written")
     
@@ -405,7 +421,7 @@ try:
     if product_analytics.count()>0:
         store_performance.write \
             .mode("overwrite") \
-            .saveAsTable("retail_data.gold_store_performance")
+            .saveAsTable(f"{user_schema}.gold_store_performance")
         
         print(f"✅ Store performance: {store_performance.count():,} records written")
     
@@ -433,7 +449,7 @@ exec_metrics = spark.sql(f"""
         COUNT(DISTINCT store_id) as active_stores,
         MAX(total_revenue) as top_store_revenue,
         MIN(total_revenue) as bottom_store_revenue
-    FROM retail_data.gold_daily_sales_summary
+    FROM {user_schema}.gold_daily_sales_summary
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -444,7 +460,7 @@ segment_dist = spark.sql(f"""
         COUNT(*) as customer_count,
         AVG(total_spent) as avg_lifetime_value,
         AVG(churn_risk_score) as avg_churn_risk
-    FROM retail_data.gold_customer_metrics
+    FROM {user_schema}.gold_customer_metrics
     WHERE processing_date = '{processing_date}'
     GROUP BY customer_segment
 """).collect()
@@ -456,7 +472,7 @@ product_cat_perf = spark.sql(f"""
         COUNT(*) as product_count,
         SUM(total_revenue) as category_revenue,
         AVG(inventory_turnover) as avg_turnover
-    FROM retail_data.gold_product_analytics
+    FROM {user_schema}.gold_product_analytics
     WHERE processing_date = '{processing_date}'
     GROUP BY product_category
 """).collect()
@@ -523,7 +539,7 @@ monitoring_data.extend([
 
 # Write monitoring metrics
 monitoring_df = spark.createDataFrame(monitoring_data)
-monitoring_df.write.mode("append").saveAsTable("retail_data.pipeline_metrics")
+monitoring_df.write.mode("append").saveAsTable(f"{user_schema}.pipeline_metrics")
 
 print(f"\n{'='*50}")
 print(f"GOLD AGGREGATION COMPLETED")

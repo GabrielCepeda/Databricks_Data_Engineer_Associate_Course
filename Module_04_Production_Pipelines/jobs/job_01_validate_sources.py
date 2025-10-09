@@ -37,14 +37,30 @@ print(f"Run ID: {run_id}")
 
 # COMMAND ----------
 
+def get_user_schema():
+    import re
+
+    user_email = spark.sql("SELECT current_user()").collect()[0][0]
+    # Extract before '@'
+    match = re.search(r'^[^@]+', user_email)
+    if match:
+        user_name =  match.group(0).replace('.', '_')
+        user_schema = "module4_" + user_name
+        return user_schema
+    
+    raise ValueError('User name could not be extracted')
+
+# COMMAND ----------
+
 from pyspark.sql.functions import *
 from datetime import datetime
 import json
 import uuid
 
 # Set catalog and schema
+user_schema = get_user_schema()
 spark.sql("USE CATALOG sm_training")
-spark.sql("USE SCHEMA retail_data")
+spark.sql(f"USE SCHEMA {user_schema}")
 
 # Generate run_id if not provided
 if not run_id:
@@ -62,7 +78,7 @@ validation_start = datetime.now()
 
 try:
     # Check if raw_sales table exists and has data for processing date
-    sales_df = spark.table("retail_data.raw_sales") \
+    sales_df = spark.table(f"{user_schema}.raw_sales") \
         .filter(col("processing_date") == processing_date)
         
     sales_count = sales_df.count()
@@ -82,7 +98,7 @@ try:
     validation_checks["has_required_columns"] = len(missing_columns) == 0
     validation_checks["missing_columns"] = missing_columns
         
-        # Check data freshness
+    # Check data freshness
     if sales_count > 0:
         max_timestamp = sales_df.agg(max("transaction_timestamp")).collect()[0][0]
         hours_old = (datetime.now() - max_timestamp).total_seconds() / 3600 if max_timestamp else 999
@@ -120,7 +136,7 @@ print(validation_results)
 
 try:
     # Check raw_inventory table
-    inventory_df = spark.table("retail_data.raw_inventory") \
+    inventory_df = spark.table(f"{user_schema}.raw_inventory") \
         .filter(col("processing_date") == processing_date)
     
     inventory_count = inventory_df.count()
@@ -160,6 +176,10 @@ except Exception as e:
 
 # COMMAND ----------
 
+print(validation_results)
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Validate Raw Customer Data
 
@@ -167,7 +187,7 @@ except Exception as e:
 
 try:
     # Check raw_customers table
-    customers_df = spark.table("retail_data.raw_customers") \
+    customers_df = spark.table(f"{user_schema}.raw_customers") \
         .filter(col("processing_date") == processing_date)
     
     customer_count = customers_df.count()
@@ -284,7 +304,7 @@ for result in validation_results:
 
 # Write monitoring metrics
 monitoring_df = spark.createDataFrame(monitoring_data)
-monitoring_df.write.mode("append").saveAsTable("retail_data.pipeline_metrics")
+monitoring_df.write.mode("append").saveAsTable(f"{user_schema}.pipeline_metrics")
 
 print(f"\n{'='*50}")
 print(f"VALIDATION {overall_status}")
