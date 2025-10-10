@@ -1,0 +1,62 @@
+resources:
+  jobs:
+    global_mart_job_juan_diego:
+      name: global_mart_job_juan_diego
+      tasks:
+        - task_key: job_1_validate_sources
+          notebook_task:
+            notebook_path: /Workspace/Shared/Data Engineer Associate CERT/Module
+              2/Databricks_Data_Engineer_Associate_Course/Module_04_Production_Pipelines/jobs/job_01_validate_sources
+            source: WORKSPACE
+        - task_key: job_02_bronze_ingestion
+          depends_on:
+            - task_key: job_1_validate_sources
+          notebook_task:
+            notebook_path: /Workspace/Shared/Data Engineer Associate CERT/Module
+              2/Databricks_Data_Engineer_Associate_Course/Module_04_Production_Pipelines/jobs/job_02_bronze_ingestion
+            source: WORKSPACE
+        - task_key: job_3_silver_transformations
+          depends_on:
+            - task_key: job_02_bronze_ingestion
+          notebook_task:
+            notebook_path: /Workspace/Shared/Data Engineer Associate CERT/Module
+              2/Databricks_Data_Engineer_Associate_Course/Module_04_Production_Pipelines/jobs/job_03_silver_transformation
+            source: WORKSPACE
+          job_cluster_key: test_notebook_user_cluster
+        - task_key: job_04_gold_aggregation
+          depends_on:
+            - task_key: job_3_silver_transformations
+          notebook_task:
+            notebook_path: /Workspace/Shared/Data Engineer Associate CERT/Module
+              2/Databricks_Data_Engineer_Associate_Course/Module_04_Production_Pipelines/jobs/job_04_gold_aggregation
+            source: WORKSPACE
+          job_cluster_key: test_notebook_user_cluster
+        - task_key: job_05_quality_validation
+          depends_on:
+            - task_key: job_04_gold_aggregation
+          notebook_task:
+            notebook_path: /Workspace/Shared/Data Engineer Associate CERT/Module
+              2/Databricks_Data_Engineer_Associate_Course/Module_04_Production_Pipelines/jobs/job_05_quality_validation
+            source: WORKSPACE
+          existing_cluster_id: 1009-235556-hj6gev1p
+      job_clusters:
+        - job_cluster_key: test_notebook_user_cluster
+          new_cluster:
+            cluster_name: ""
+            spark_version: 16.4.x-scala2.12
+            aws_attributes:
+              availability: SPOT_WITH_FALLBACK
+            node_type_id: m5d.large
+            spark_env_vars:
+              PYSPARK_PYTHON: /databricks/python3/bin/python3
+            data_security_mode: DATA_SECURITY_MODE_STANDARD
+            runtime_engine: PHOTON
+            kind: CLASSIC_PREVIEW
+            is_single_node: false
+            num_workers: 1
+      queue:
+        enabled: true
+      parameters:
+        - name: processing_date
+          default: "{{job.trigger.time.iso_date}}"
+      performance_target: PERFORMANCE_OPTIMIZED
