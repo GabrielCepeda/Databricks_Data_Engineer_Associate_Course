@@ -40,14 +40,30 @@ print(f"Batch Size: {batch_size}")
 
 # COMMAND ----------
 
+def get_user_schema():
+    import re
+
+    user_email = spark.sql("SELECT current_user()").collect()[0][0]
+    # Extract before '@'
+    match = re.search(r'^[^@]+', user_email)
+    if match:
+        user_name =  match.group(0).replace('.', '_')
+        user_schema = "module4_" + user_name
+        return user_schema
+    
+    raise ValueError('User name could not be extracted')
+
+# COMMAND ----------
+
 from pyspark.sql.functions import *
 from pyspark.sql.types import *
 from datetime import datetime
 import json
 
 # Set catalog and schema
+user_schema = get_user_schema()
 spark.sql("USE CATALOG sm_training")
-spark.sql("USE SCHEMA retail_data")
+spark.sql(f"USE SCHEMA {user_schema}")
 
 ingestion_start = datetime.now()
 ingestion_metrics = {}
@@ -63,7 +79,7 @@ try:
     print("📥 Ingesting sales data to Bronze layer...")
     
     # Read raw sales data
-    raw_sales_df = spark.table("retail_data.raw_sales") \
+    raw_sales_df = spark.table(f"{user_schema}.raw_sales") \
         .filter(col("processing_date") == processing_date)
     
     # Add Bronze layer metadata
@@ -84,7 +100,7 @@ try:
     bronze_sales_df.createOrReplaceTempView("bronze_sales_staging")
     
     merge_query = f"""
-    MERGE INTO retail_data.bronze_sales target
+    MERGE INTO {user_schema}.bronze_sales target
     USING bronze_sales_staging source
     ON target.transaction_id = source.transaction_id 
        AND target.processing_date = source.processing_date
@@ -122,7 +138,7 @@ try:
     print("📥 Ingesting inventory data to Bronze layer...")
     
     # Read raw inventory data
-    raw_inventory_df = spark.table("retail_data.raw_inventory") \
+    raw_inventory_df = spark.table(f"{user_schema}.raw_inventory") \
         .filter(col("processing_date") == processing_date)
     
     # Add Bronze layer metadata and quality checks
@@ -140,7 +156,7 @@ try:
     bronze_inventory_df.write \
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
-        .saveAsTable("retail_data.bronze_inventory")
+        .saveAsTable(f"{user_schema}.bronze_inventory")
     
     # Calculate metrics
     inventory_count = bronze_inventory_df.count()
@@ -172,7 +188,7 @@ try:
     print("📥 Ingesting customer data to Bronze layer...")
     
     # Read raw customer data
-    raw_customers_df = spark.table("retail_data.raw_customers") \
+    raw_customers_df = spark.table(f"{user_schema}.raw_customers") \
         .filter(col("processing_date") == processing_date)
     
     # Add Bronze layer metadata and calculate customer metrics
@@ -192,7 +208,7 @@ try:
     bronze_customers_df.write \
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
-        .saveAsTable("retail_data.bronze_customers")
+        .saveAsTable(f"{user_schema}.bronze_customers")
     
     # Calculate metrics
     customer_count = bronze_customers_df.count()
@@ -229,7 +245,7 @@ quality_checks = []
 # Check for duplicate transactions
 duplicate_check = spark.sql(f"""
     SELECT COUNT(*) as total, COUNT(DISTINCT transaction_id) as unique_ids
-    FROM retail_data.bronze_sales
+    FROM {user_schema}.bronze_sales
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -253,7 +269,7 @@ quality_checks.append({
 #        SUM(CASE WHEN customer_id IS NULL THEN 1 ELSE 0 END) as null_customers,
 #        SUM(CASE WHEN total_amount IS NULL OR total_amount <= 0 THEN 1 ELSE 0 END) as invalid_amounts,
 #        COUNT(*) as total
-#    FROM retail_data.bronze_sales
+#    FROM {user_schema}.bronze_sales
 #    WHERE processing_date = '{processing_date}'
 #""").collect()[0]
 
@@ -264,7 +280,7 @@ null_check = spark.sql(f"""
         COALESCE(SUM(CASE WHEN customer_id IS NULL THEN 1 ELSE 0 END), 0) as null_customers,
         COALESCE(SUM(CASE WHEN total_amount IS NULL OR total_amount <= 0 THEN 1 ELSE 0 END), 0) as invalid_amounts,
         COUNT(*) as total
-    FROM retail_data.bronze_sales
+    FROM {user_schema}.bronze_sales
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -300,7 +316,7 @@ quality_df = quality_df.select(
     quality_df["processing_date"].cast("date").alias("processing_date")
 )
 
-quality_df.write.mode("append").saveAsTable("retail_data.data_quality_metrics")
+quality_df.write.mode("append").saveAsTable(f"{user_schema}.data_quality_metrics")
 
 print(f"✅ Quality checks completed: {len([c for c in quality_checks if c['check_result'] == 'PASS'])}/{len(quality_checks)} passed")
 
@@ -374,7 +390,7 @@ monitoring_data.append({
 
 # Write monitoring metrics
 monitoring_df = spark.createDataFrame(monitoring_data)
-monitoring_df.write.mode("append").saveAsTable("retail_data.pipeline_metrics")
+monitoring_df.write.mode("append").saveAsTable(f"{user_schema}.pipeline_metrics")
 
 print(f"\n{'='*50}")
 print(f"BRONZE INGESTION COMPLETED")

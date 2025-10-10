@@ -40,14 +40,31 @@ print(f"Quality Threshold: {quality_threshold}")
 
 # COMMAND ----------
 
+def get_user_schema():
+    import re
+
+    user_email = spark.sql("SELECT current_user()").collect()[0][0]
+    # Extract before '@'
+    match = re.search(r'^[^@]+', user_email)
+    if match:
+        user_name =  match.group(0).replace('.', '_')
+        user_schema = "module4_" + user_name
+        return user_schema
+    
+    raise ValueError('User name could not be extracted')
+
+# COMMAND ----------
+
 from pyspark.sql.functions import *
 from pyspark.sql.window import Window
 from datetime import datetime
 import json
 
+
 # Set catalog and schema
+user_schema = get_user_schema()
 spark.sql("USE CATALOG sm_training")
-spark.sql("USE SCHEMA retail_data")
+spark.sql(f"USE SCHEMA {user_schema}")
 
 transformation_start = datetime.now()
 transformation_metrics = {}
@@ -62,13 +79,13 @@ transformation_metrics = {}
 print("📊 Loading Bronze layer data...")
 
 # Load Bronze tables
-bronze_sales_df = spark.table("retail_data.bronze_sales") \
+bronze_sales_df = spark.table(f"{user_schema}.bronze_sales") \
     .filter(col("processing_date") == processing_date)
 
-bronze_customers_df = spark.table("retail_data.bronze_customers") \
+bronze_customers_df = spark.table(f"{user_schema}.bronze_customers") \
     .filter(col("processing_date") == processing_date)
 
-bronze_inventory_df = spark.table("retail_data.bronze_inventory") \
+bronze_inventory_df = spark.table(f"{user_schema}.bronze_inventory") \
     .filter(col("processing_date") == processing_date)
 
 print(f"✅ Loaded Bronze data:")
@@ -251,7 +268,7 @@ try:
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
         .partitionBy("processing_date") \
-        .saveAsTable("retail_data.silver_sales")
+        .saveAsTable(f"{user_schema}.silver_sales")
     
     sales_count = silver_sales_df.count()
     transformation_metrics["sales"] = {
@@ -264,7 +281,7 @@ try:
     silver_inventory_df.write \
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
-        .saveAsTable("retail_data.silver_inventory")
+        .saveAsTable(f"{user_schema}.silver_inventory")
     
     inventory_count = silver_inventory_df.count()
     transformation_metrics["inventory"] = {
@@ -277,7 +294,7 @@ try:
     silver_customers_df.write \
         .mode("overwrite") \
         .option("overwriteSchema", "true") \
-        .saveAsTable("retail_data.silver_customers")
+        .saveAsTable(f"{user_schema}.silver_customers")
     
     customers_count = silver_customers_df.count()
     transformation_metrics["customers"] = {
@@ -306,7 +323,7 @@ completeness_check = spark.sql(f"""
         SUM(CASE WHEN customer_segment != 'Unknown' THEN 1 ELSE 0 END) as known_segments,
         SUM(CASE WHEN customer_region != 'Unknown' THEN 1 ELSE 0 END) as known_regions,
         COALESCE(AVG(data_quality_score),0) as avg_quality_score
-    FROM retail_data.silver_sales
+    FROM {user_schema}.silver_sales
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -339,7 +356,7 @@ anomaly_check = spark.sql(f"""
         COUNT(CASE WHEN discount_percentage > 100 THEN 1 END) as invalid_discounts,
         COUNT(DISTINCT customer_id) as unique_customers,
         COUNT(DISTINCT product_id) as unique_products
-    FROM retail_data.silver_sales
+    FROM {user_schema}.silver_sales
     WHERE processing_date = '{processing_date}'
 """).collect()[0]
 
@@ -429,7 +446,7 @@ monitoring_data.extend([
 
 # Write monitoring metrics
 monitoring_df = spark.createDataFrame(monitoring_data)
-monitoring_df.write.mode("append").saveAsTable("retail_data.pipeline_metrics")
+monitoring_df.write.mode("append").saveAsTable(f"{user_schema}.pipeline_metrics")
 
 print(f"\n{'='*50}")
 print(f"SILVER TRANSFORMATION COMPLETED")
