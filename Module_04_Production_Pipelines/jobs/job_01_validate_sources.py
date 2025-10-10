@@ -325,12 +325,9 @@ if failed_sources:
 
 # Return validation results to the job orchestrator
 if overall_status == "FAILED":
-    error_msg = f"Validation failed for {len(failed_sources)} source(s): {', '.join([s['source'] for s in failed_sources])}"
-    dbutils.notebook.exit(json.dumps({
-        "status": "FAILED",
-        "error": error_msg,
-        "details": validation_summary
-    }))
+    class DataValidationError(Exception): pass
+    raise DataValidationError(f"Validation failed: {validation_summary['validation_details']}")
+
 else:
     dbutils.notebook.exit(json.dumps({
         "status": "SUCCESS",
